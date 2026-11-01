@@ -1,21 +1,23 @@
 pub struct Config {
+    pub fps: usize,
     pub width: usize,
     pub height: usize,
-    pub buf_size: usize,
-    pub pixel_size: usize,
-    pub filename: String,
+    pub workers: usize,
+    pub duration: usize,
     pub out_dir: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
+            fps: 8,
             width: 640,
             height: 480,
-            filename: "img.ppm".into(),
-            pixel_size: 20,
-            buf_size: 8 * 1024,
+            duration: 30,
             out_dir: "out".into(),
+            workers: std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1),
         }
     }
 }
