@@ -7,6 +7,7 @@ use std::{
 
 use pixppm::config::{Config, get_config};
 use rand::distr::{Distribution, Uniform};
+use std::process::{Command, Stdio};
 
 fn main() -> io::Result<()> {
     let config = Arc::new(get_config());
@@ -31,6 +32,15 @@ fn main() -> io::Result<()> {
         handle.join().unwrap();
     }
 
+    if let Err(err) = create_mp4(
+        std::fs::read_dir(config.out_dir.clone())?
+            .map(|it| it.unwrap().path())
+            .collect::<Vec<_>>()
+            .as_slice(),
+    ) {
+        eprintln!("{}", err);
+    }
+
     Ok(())
 }
 
@@ -40,7 +50,10 @@ fn create_ppm_file(config: &Config, thread_id: usize, file_id: usize) -> io::Res
 
     let pixel_count = 3 * config.width * config.height;
     let file = File::create(path_buf)?;
-    let mut buf_writer = BufWriter::with_capacity(pixel_count, file);
+    let header = format!("P6\n{} {}\n255\n", config.width, config.height);
+    let mut buf_writer = BufWriter::with_capacity(pixel_count + header.len(), file);
+
+    buf_writer.write_all(header.as_bytes())?;
 
     let mut rng = rand::rng();
     let uniform_dist = Uniform::new_inclusive(0, 255).unwrap();
@@ -52,5 +65,44 @@ fn create_ppm_file(config: &Config, thread_id: usize, file_id: usize) -> io::Res
 
     buf_writer.write_all(&buffer)?;
     buf_writer.flush()?;
+    Ok(())
+}
+
+fn create_mp4(images: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
+    let duration_per_image = 1.0;
+
+    let mut child = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            "pipe:0",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "output.mp4",
+        ])
+        .stdin(Stdio::piped())
+        .spawn()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        for img in images {
+            writeln!(stdin, "file '{:?}'", img)?;
+            writeln!(stdin, "duration {}", duration_per_image)?;
+        }
+        if let Some(last) = images.last() {
+            writeln!(stdin, "file '{:?}'", last)?;
+        }
+    }
+
+    let status = child.wait()?;
+    if !status.success() {
+        eprintln!("FFmpeg failed with status: {status}");
+    }
+
     Ok(())
 }
