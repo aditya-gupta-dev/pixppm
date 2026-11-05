@@ -1,8 +1,9 @@
+use rand::RngExt;
+use rand::rngs::ThreadRng;
 use std::{
     fs::File,
     io::{self, BufWriter, Write},
     path::PathBuf,
-    sync::Arc,
 };
 
 use pixppm::config::{Config, get_config};
@@ -10,43 +11,60 @@ use rand::distr::{Distribution, Uniform};
 use std::process::{Command, Stdio};
 
 fn main() -> io::Result<()> {
-    let config = Arc::new(get_config());
-    let mut handles = Vec::with_capacity(config.workers);
-    let files_count_per_thread = (config.fps * config.duration) / config.workers;
-    let remaining_files_count = (config.fps * config.duration) % config.workers;
+    let config = get_config();
+    let total_frames = config.fps * config.duration;
+    let frame_bytes = 3 * config.width * config.height;
+    let mut child = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            &format!("{}x{}", config.width, config.height),
+            "-r",
+            &config.fps.to_string(),
+            "-i",
+            "pipe:0",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "output.mp4",
+        ])
+        .stderr(Stdio::null())
+        .stdin(Stdio::piped())
+        .spawn()?;
 
-    for thread_id in 0..config.workers {
-        let config = Arc::clone(&config);
-        handles.push(std::thread::spawn(move || {
-            for x in 0..files_count_per_thread {
-                create_ppm_file(&config, thread_id, x).unwrap();
-            }
-        }));
+    if let Some(stdin) = child.stdin.take() {
+        let mut rng = rand::rng();
+        let mut writer = BufWriter::with_capacity(frame_bytes * 3, stdin);
+
+        for _ in 0..total_frames {
+            writer.write_all(&gen_pixel_buf(&mut rng, frame_bytes))?;
+        }
+        writer.flush()?;
     }
 
-    for x in 0..remaining_files_count {
-        create_ppm_file(&config, config.workers + 1, x).unwrap();
+    let status = child.wait()?;
+    if !status.success() {
+        eprintln!("{}", status);
     }
 
-    for handle in handles {
-        handle.join().unwrap();
-    }
-
-    if let Err(err) = create_mp4(
-        std::fs::read_dir(config.out_dir.clone())?
-            .map(|it| it.unwrap().path())
-            .collect::<Vec<_>>()
-            .as_slice(),
-    ) {
-        eprintln!("{}", err);
-    }
-
+    println!("Encoding finished successfully without writing any PPM files!");
     Ok(())
 }
 
-fn create_ppm_file(config: &Config, thread_id: usize, file_id: usize) -> io::Result<()> {
-    let path_buf =
-        PathBuf::from(&config.out_dir).join(format!("img-{}-{}.ppm", thread_id, file_id));
+fn gen_pixel_buf(rng: &mut ThreadRng, pix_count: usize) -> Vec<u8> {
+    let mut pixels = vec![0u8; pix_count];
+    rng.fill(&mut pixels[..]);
+    pixels
+}
+
+#[allow(dead_code)]
+fn create_ppm_file(config: &Config, file_id: usize) -> io::Result<()> {
+    let path_buf = PathBuf::from(&config.out_dir).join(format!("img-{}.ppm", file_id));
 
     let pixel_count = 3 * config.width * config.height;
     let file = File::create(path_buf)?;
@@ -68,6 +86,7 @@ fn create_ppm_file(config: &Config, thread_id: usize, file_id: usize) -> io::Res
     Ok(())
 }
 
+#[allow(dead_code)]
 fn create_mp4(images: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
     let duration_per_image = 1.0;
 
