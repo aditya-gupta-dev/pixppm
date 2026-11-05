@@ -10,10 +10,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            fps: 8,
-            width: 640,
-            height: 480,
-            duration: 30,
+            fps: 24,
+            width: 1280,
+            height: 720,
+            duration: 60,
             out_dir: "out".into(),
             workers: std::thread::available_parallelism()
                 .map(|n| n.get())

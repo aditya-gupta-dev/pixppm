@@ -4,6 +4,7 @@ use std::{
     fs::File,
     io::{self, BufWriter, Write},
     path::PathBuf,
+    time::Instant,
 };
 
 use pixppm::config::{Config, get_config};
@@ -11,6 +12,7 @@ use rand::distr::{Distribution, Uniform};
 use std::process::{Command, Stdio};
 
 fn main() -> io::Result<()> {
+    let start = Instant::now();
     let config = get_config();
     let total_frames = config.fps * config.duration;
     let frame_bytes = 3 * config.width * config.height;
@@ -39,10 +41,14 @@ fn main() -> io::Result<()> {
 
     if let Some(stdin) = child.stdin.take() {
         let mut rng = rand::rng();
+        let mut buffer: Vec<u8> = Vec::with_capacity(frame_bytes);
         let mut writer = BufWriter::with_capacity(frame_bytes * 3, stdin);
 
+        buffer.resize(frame_bytes, 0);
+
         for _ in 0..total_frames {
-            writer.write_all(&gen_pixel_buf(&mut rng, frame_bytes))?;
+            gen_pixel_buf(&mut rng, &mut buffer);
+            writer.write_all(&buffer)?;
         }
         writer.flush()?;
     }
@@ -52,14 +58,12 @@ fn main() -> io::Result<()> {
         eprintln!("{}", status);
     }
 
-    println!("Encoding finished successfully without writing any PPM files!");
+    println!("Completed. Took {:?}", start.elapsed());
     Ok(())
 }
 
-fn gen_pixel_buf(rng: &mut ThreadRng, pix_count: usize) -> Vec<u8> {
-    let mut pixels = vec![0u8; pix_count];
-    rng.fill(&mut pixels[..]);
-    pixels
+fn gen_pixel_buf(rng: &mut ThreadRng, buffer: &mut Vec<u8>) {
+    rng.fill(&mut buffer[..]);
 }
 
 #[allow(dead_code)]
